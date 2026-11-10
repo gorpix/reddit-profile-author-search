@@ -1,9 +1,11 @@
 // ==UserScript==
 // @name         Reddit Profile Author Search
 // @namespace    https://reddit.com/
-// @version      0.9-preview
+// @version      1.0
 // @description  Seamlessly restores hidden Reddit profile posts and comments using Reddit's native search results.
-// @author       You
+// @author       gorpix
+// @homepageURL  https://github.com/gorpix/reddit-profile-author-search
+// @supportURL   https://github.com/gorpix/reddit-profile-author-search/issues
 // @downloadURL  https://raw.githubusercontent.com/gorpix/reddit-profile-author-search/main/reddit-profile-author-search.user.js
 // @updateURL    https://raw.githubusercontent.com/gorpix/reddit-profile-author-search/main/reddit-profile-author-search.user.js
 // @match        https://www.reddit.com/user/*
@@ -177,7 +179,7 @@
             existingButtons.forEach((button) => {
                 button.href = searchUrl;
                 button.title = `Search Reddit for author:"${username}"`;
-                button.setAttribute('aria-label', `Search Reddit for ${type} by ${username}`);
+                button.setAttribute('aria-label', `Show all ${type} by ${username}`);
             });
             return;
         }
@@ -188,9 +190,9 @@
         const button = document.createElement('a');
         button.className = BUTTON_CLASS;
         button.href = searchUrl;
-        button.textContent = 'Search Author';
+        button.textContent = 'Show all content';
         button.title = `Search Reddit for author:"${username}"`;
-        button.setAttribute('aria-label', `Search Reddit for ${type} by ${username}`);
+        button.setAttribute('aria-label', `Show all ${type} by ${username}`);
 
         const feedOptionsButton = label.closest('button');
         (feedOptionsButton || label).insertAdjacentElement('afterend', button);
@@ -235,6 +237,34 @@
         return [];
     }
 
+    // Reddit renders counts with custom elements (e.g. <faceplate-number>) whose
+    // server-rendered text is already present. When a cloned copy connects to this
+    // page, the element renders again and appends to that text ("20" -> "2020").
+    // Swap such leaf custom elements for inert spans holding the original text.
+    const COUNT_TEXT_PATTERN = /^[\d.,]+\s*[KkMmBb]?$/;
+
+    function freezeCountElements(original, clone) {
+        const originals = original.querySelectorAll('*');
+        const clones = clone.querySelectorAll('*');
+        if (originals.length !== clones.length) return;
+
+        for (let index = 0; index < clones.length; index += 1) {
+            const source = originals[index];
+            const target = clones[index];
+            if (!target.localName.includes('-') || target.childElementCount) continue;
+
+            const text = normalizeText(source.textContent);
+            if (!COUNT_TEXT_PATTERN.test(text)) continue;
+
+            const span = document.createElement('span');
+            if (target.className) span.className = target.className;
+            const label = target.getAttribute('aria-label');
+            if (label) span.setAttribute('aria-label', label);
+            span.textContent = text;
+            target.replaceWith(span);
+        }
+    }
+
     function appendNewResults(currentSession, roots) {
         let added = 0;
 
@@ -250,6 +280,7 @@
             }
 
             const clone = document.importNode(root, true);
+            freezeCountElements(root, clone);
             clone.removeAttribute('id');
             clone.style.display = 'block';
             currentSession.feed.insertBefore(clone, currentSession.sentinel);

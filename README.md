@@ -4,7 +4,7 @@ A userscript that restores publicly searchable posts and comments directly insid
 
 ## Added
 
-- A neutral **Search Author** button beside Reddit's **Feed options** control.
+- A neutral **Show all content** button beside Reddit's **Feed options** control.
 - Automatic `author:"username"` searches for hidden profile activity.
 - Separate native results for Reddit's **Posts** and **Comments** tabs using `type=posts` and `type=comments`.
 - Reddit's own result components, styling, links, sorting, and continuous loading inside the existing profile feed.
