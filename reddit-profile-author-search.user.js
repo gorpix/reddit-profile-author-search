@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Profile Author Search
 // @namespace    https://reddit.com/
-// @version      1.0
+// @version      1.0.1
 // @description  Seamlessly restores hidden Reddit profile posts and comments using Reddit's native search results.
 // @author       gorpix
 // @homepageURL  https://github.com/gorpix/reddit-profile-author-search
@@ -26,7 +26,11 @@
     const FRAME_CLASS = 'reddit-native-history-source';
     const HIDDEN_NOTICE_PATTERN = /\blikes to keep their (posts|comments) hidden\b/i;
     const FEED_OPTIONS_TEXT = 'feed options';
-    const MAX_INITIAL_WAIT_MS = 20000;
+    // Results are present as soon as a working search page loads, so check right
+    // after the frame loads and, if empty, reload and recheck (up to 2 retries).
+    const FRAME_LOAD_TIMEOUT_MS = 10000;
+    const RESULT_GRACE_MS = 750;
+    const MAX_ATTEMPTS = 3;
     const MAX_MORE_WAIT_MS = 6000;
 
     let scheduled = false;
@@ -221,8 +225,9 @@
         return id || firstLink || context || normalizeText(root.textContent).slice(0, 300);
     }
 
-    async function waitForResults(currentSession, timeoutMs) {
-        const deadline = Date.now() + timeoutMs;
+    async function waitForResults(currentSession) {
+        await Promise.race([currentSession.frame.loaded, delay(FRAME_LOAD_TIMEOUT_MS)]);
+        const deadline = Date.now() + RESULT_GRACE_MS;
         while (!currentSession.cancelled && Date.now() < deadline) {
             const frameDocument = currentSession.frame.contentDocument;
             if (frameDocument) {
@@ -335,17 +340,24 @@
         session = null;
     }
 
-    async function integrateNativeResults(notice, username, type) {
-        const token = `${username.toLowerCase()}:${type}:${location.pathname}`;
-        if (session?.token === token && session.notice?.isConnected) return;
-        cleanupSession({ removeFeed: true });
-
+    function createSourceFrame(username, type) {
         const frame = document.createElement('iframe');
         frame.className = FRAME_CLASS;
         frame.src = getSearchUrl(username, type);
         frame.tabIndex = -1;
         frame.setAttribute('aria-hidden', 'true');
         frame.setAttribute('title', '');
+        // Listen before the frame is inserted so the load event can't be missed.
+        frame.loaded = new Promise((resolve) => frame.addEventListener('load', resolve, { once: true }));
+        return frame;
+    }
+
+    async function integrateNativeResults(notice, username, type) {
+        const token = `${username.toLowerCase()}:${type}:${location.pathname}`;
+        if (session?.token === token && session.notice?.isConnected) return;
+        cleanupSession({ removeFeed: true });
+
+        const frame = createSourceFrame(username, type);
 
         const feed = document.createElement('div');
         feed.className = FEED_CLASS;
@@ -376,8 +388,18 @@
         notice.dataset.redditNativeHistoryLoading = token;
         document.body.appendChild(frame);
 
-        const roots = await waitForResults(currentSession, MAX_INITIAL_WAIT_MS);
-        if (currentSession.cancelled || session !== currentSession) return;
+        let roots = [];
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+            if (attempt > 1) {
+                // A brand-new frame avoids reading the stale document of the failed load.
+                const freshFrame = createSourceFrame(username, type);
+                currentSession.frame.replaceWith(freshFrame);
+                currentSession.frame = freshFrame;
+            }
+            roots = await waitForResults(currentSession);
+            if (currentSession.cancelled || session !== currentSession) return;
+            if (roots.length) break;
+        }
 
         // Leave Reddit's own notice intact if its search genuinely has no results.
         if (!roots.length || !notice.isConnected) {
