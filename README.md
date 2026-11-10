@@ -7,7 +7,8 @@ A userscript that restores publicly searchable posts and comments directly insid
 - A neutral **Show all content** button beside Reddit's **Feed options** control.
 - Automatic `author:"username"` searches for hidden profile activity.
 - Separate native results for Reddit's **Posts** and **Comments** tabs using `type=posts` and `type=comments`.
-- Reddit's own result components, styling, links, sorting, and continuous loading inside the existing profile feed.
+- Reddit's own result components, styling, and links inside the existing profile feed, loading more results as you scroll.
+- Sorting follows the profile's **Feed options** (Hot, New, Top and its time range); New is the default.
 - Safe fallback to Reddit's original hidden-history notice when no results are available or loading fails.
 
 Only public content returned by Reddit Search is shown. The script does not expose private or deleted content.

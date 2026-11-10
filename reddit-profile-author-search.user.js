@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Profile Author Search
 // @namespace    https://reddit.com/
-// @version      1.0.1
+// @version      1.0.2
 // @description  Seamlessly restores hidden Reddit profile posts and comments using Reddit's native search results.
 // @author       gorpix
 // @homepageURL  https://github.com/gorpix/reddit-profile-author-search
@@ -65,15 +65,19 @@
             text-decoration: none !important;
         }
 
+        /* The source frame must sit inside the window: Reddit's search loads more
+           results only when its scroll marker is on screen, and an off-screen frame
+           never counts as on screen. Transparent, click-through and behind the page. */
         .${FRAME_CLASS} {
             position: fixed !important;
-            left: -12000px !important;
+            left: 0 !important;
             top: 0 !important;
-            width: 1200px !important;
-            height: 900px !important;
+            width: 100vw !important;
+            height: 100vh !important;
             border: 0 !important;
             opacity: 0 !important;
             pointer-events: none !important;
+            z-index: -1 !important;
         }
 
         .${FEED_CLASS},
@@ -115,12 +119,31 @@
         return null;
     }
 
+    // Follow the profile's Feed options sort (?sort=hot|new|top&t=...), defaulting to new.
+    function getProfileSort() {
+        const params = new URLSearchParams(location.search);
+        const requested = (params.get('sort') || '').toLowerCase();
+        const sort = ['hot', 'new', 'top'].includes(requested) ? requested : 'new';
+        const requestedTime = (params.get('t') || '').toLowerCase();
+        const time = sort === 'top' && ['hour', 'day', 'week', 'month', 'year', 'all'].includes(requestedTime)
+            ? requestedTime
+            : '';
+        return { sort, time };
+    }
+
+    function getSessionToken(username, type) {
+        const { sort, time } = getProfileSort();
+        return `${username.toLowerCase()}:${type}:${location.pathname}:${sort}:${time}`;
+    }
+
     function getSearchUrl(username, type) {
         // Keep the frame same-origin so its native result nodes can be adopted.
+        const { sort, time } = getProfileSort();
         const url = new URL('/search/', location.origin);
         url.searchParams.set('q', `author:"${username}"`);
         url.searchParams.set('type', type);
-        url.searchParams.set('sort', 'new');
+        url.searchParams.set('sort', sort);
+        if (time) url.searchParams.set('t', time);
         return url.href;
     }
 
@@ -328,6 +351,13 @@
         }
 
         currentSession.loadingMore = false;
+
+        // The observer only fires when the sentinel enters the margin. If a small
+        // batch left it in range, it won't fire again, so keep loading from here.
+        if (!currentSession.finished && !currentSession.cancelled && currentSession.sentinel.isConnected) {
+            const top = currentSession.sentinel.getBoundingClientRect().top;
+            if (top < window.innerHeight + 1000) loadMore(currentSession);
+        }
     }
 
     function cleanupSession({ removeFeed = false } = {}) {
@@ -335,7 +365,15 @@
         session.cancelled = true;
         session.observer?.disconnect();
         session.frame?.remove();
-        if (removeFeed) session.feed?.remove();
+        if (removeFeed && session.feed) {
+            // Restore Reddit's notice in place of the feed (e.g. after a sort change
+            // without a full page load) so the next pass can rebuild from it.
+            if (session.feed.isConnected && session.notice && !session.notice.isConnected) {
+                session.feed.replaceWith(session.notice);
+            } else {
+                session.feed.remove();
+            }
+        }
         if (session.notice?.isConnected) delete session.notice.dataset.redditNativeHistoryLoading;
         session = null;
     }
@@ -353,7 +391,7 @@
     }
 
     async function integrateNativeResults(notice, username, type) {
-        const token = `${username.toLowerCase()}:${type}:${location.pathname}`;
+        const token = getSessionToken(username, type);
         if (session?.token === token && session.notice?.isConnected) return;
         cleanupSession({ removeFeed: true });
 
@@ -432,7 +470,7 @@
 
         const noticeInfo = findHiddenNotice();
         const type = getPathListingType() || noticeInfo?.type || 'posts';
-        const expectedToken = `${username.toLowerCase()}:${type}:${location.pathname}`;
+        const expectedToken = getSessionToken(username, type);
         const existingFeed = document.querySelector(`.${FEED_CLASS}`);
 
         if (existingFeed && existingFeed.dataset.token !== expectedToken) {
